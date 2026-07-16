@@ -2,3 +2,4 @@ datasets/*/
 logs/*/
 outputs/*/
 init_weights/*/
+checkpoints/*/
