@@ -4,7 +4,7 @@ import argparse
 import importlib
 from torch.backends import cudnn
 cudnn.enabled = True
-from configs.model_config import get_config
+from configs.model_config import get_stage1_config
 from tool.infer_fun import create_pseudo_mask
 
 if __name__ == '__main__':
@@ -18,7 +18,7 @@ if __name__ == '__main__':
     # parser.add_argument("--n_class", default=4, type=int)
     # args = parser.parse_args()
     
-    args = get_config()
+    args = get_stage1_config()
     print(args)
     
     if args.dataset == 'luad':

@@ -33,18 +33,25 @@ def positive_int(value: str) -> int:
 
     return ivalue
 
+# ============================================================================
+# Stage 1: HistoGraphWSL Pipeline Configuration
+# ============================================================================
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="HistoGraphWSL Pipeline")
+def build_stage1_parser() -> argparse.ArgumentParser:
+    """
+    Builds the argument parser for Stage 1 (HistoGraphWSL Pipeline).
+    """
+    
+    parser = argparse.ArgumentParser(description="HistoGraphWSL Pipeline - Stage 1: Initial Training")
 
-    # --- Existing Dataset Options ---
+    # --- Dataset Path Options ---
     parser.add_argument("--dataset", type=str, default="luad", help="Dataset name.")
     parser.add_argument("--output_dir", type=str, default="outputs/")
     
     # New: Split dataset roots for train/test if required by your script
     parser.add_argument("--trainroot", type=str, default="datasets/LUAD-HistoSeg/train5/")
     parser.add_argument("--testroot", type=str, default="datasets/LUAD-HistoSeg/test/")
-    parser.add_argument("--dataroot", default="datasets/LUAD-HistoSeg", type=str)
+    parser.add_argument("--dataroot", default="datasets/LUAD-HistoSeg", type=str, help="Root directory of the dataset.")
     parser.add_argument("--save_folder", type=str, default="checkpoints/")
 
     # --- Optimization & Training Options ---
@@ -59,12 +66,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--network", type=str, default="network.resnet38_cls")
     parser.add_argument("--n_class", type=positive_int, default=4, help="Number of classes for segmentation. Ex: [Tumor, Stroma, Lymphocyte, Necrosis] = 4 classes") 
     
+    # ===================================== Model Weights (Toggle stages as needed) =============================================================
     # --- stage 1: intial training weights --- --- comment this line when you run other stages ---
     # parser.add_argument("--weights", type=str, default="init_weights/ilsvrc-cls_rna-a1_cls1000_ep-0001.pth")
     
     # --- stage 2: pseudo mask generation: stage 1 final weights ---  --- comment this line when you run other stages ---
     parser.add_argument("--weights", default='checkpoints/stage1_checkpoint_trained_on_luad.pth', type=str)
-
+    #=============================================================================================================================================
+    
     # --- Runtime Environments ---
     parser.add_argument("--session_name", type=str, default="Stage 1")
     parser.add_argument("--env_name", type=str, default="PDA")
@@ -87,38 +96,81 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def create_output_dirs(output_root: Path) -> None:
+
+
+
+def get_stage1_config(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """
-    Create project output folders.
-    """
-
-    folders = [
-        "patches",
-        "masks",
-        "labels",
-        "graphs",
-        "metadata",
-        "visualizations",
-        "logs",
-    ]
-
-    for folder in folders:
-        (output_root / folder).mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-
-def get_config(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """
-    Parse and validate configuration.
+    Parses arguments for Stage 1, creates necessary directories, and returns parsed configurations.
     """
 
-    parser = build_parser()
+    parser = build_stage1_parser()
 
     args = parser.parse_args(argv)
 
-    create_output_dirs(Path(args.output_dir))
+    # create_output_dirs(Path(args.output_dir))
 
     return args
 
+
+# ============================================================================
+# Stage 2: Weakly Supervised Semantic Segmentation (WSSS) Configuration
+# ============================================================================
+def build_stage2_parser() -> argparse.ArgumentParser:
+    """
+    Builds the argument parser for Stage 2 (WSSS Stage 2 using DeepLab/Backbones).
+    """
+    parser = argparse.ArgumentParser(description="WSSS Stage2 Pipeline")
+    
+    # --- Execution Controls ---
+    parser.add_argument("--test-only", "-t", action="store_true", default=False, help="Bypass training and validation to run testing directly.")
+    
+    # --- Network Architecture Options ---
+    parser.add_argument("--backbone", type=str, default="resnet", choices=["resnet", "xception", "drn", "mobilenet"], help="Feature extractor backbone.")
+    parser.add_argument("--out-stride", type=int, default=16, help="Network output stride.")
+    parser.add_argument("--Is_GM", type=bool, default=True, help="Enable the Gate Mechanism in the testing phase.")
+    
+    # --- Dataset Options ---
+    parser.add_argument("--dataroot", type=str, default="datasets/LUAD-HistoSeg", help="Root directory of the dataset.")
+    parser.add_argument("--dataset", type=str, default="luad", help="Dataset name.")
+    parser.add_argument("--savepath", type=str, default="checkpoints/", help="Directory to save training checkpoints.")
+    parser.add_argument("--workers", type=int, default=2, metavar="N", help="Number of dataloader worker threads.")
+    
+    # --- Batch Normalization & Loss ---
+    parser.add_argument("--sync-bn", type=bool, default=None, help="Use synchronous batch normalization.")
+    parser.add_argument("--freeze-bn", type=bool, default=False, help="Freeze batch normalization layers during training.")
+    parser.add_argument("--loss-type", type=str, default="ce", choices=["ce", "focal"], help="Loss function type.")
+    parser.add_argument("--n_class", type=int, default=4, help="Number of segmentation classes.")
+    
+    # --- Training Hyperparameters ---
+    parser.add_argument("--epochs", type=int, default=20, metavar="N", help="Number of epochs to train.")
+    parser.add_argument("--batch-size", type=int, default=16, metavar="N", help="Input batch size for training.")
+    
+    # --- Optimizer Parameters ---
+    parser.add_argument("--lr", type=float, default=0.01, metavar="LR", help="Initial learning rate.")
+    parser.add_argument("--lr-scheduler", type=str, default="poly", choices=["poly", "step", "cos"], help="Learning rate schedule approach.")
+    parser.add_argument("--momentum", type=float, default=0.9, metavar="M", help="SGD momentum factor.")
+    parser.add_argument("--weight-decay", type=float, default=5e-4, metavar="M", help="SGD weight decay factor.")
+    parser.add_argument("--nesterov", action="store_true", default=False, help="Enable Nesterov momentum.")
+    
+    # --- Environment & CUDA Settings ---
+    parser.add_argument("--no-cuda", action="store_true", default=False, help="Disables CUDA (GPU) training.")
+    parser.add_argument("--gpu-ids", type=str, default="0", help="Comma-separated GPU IDs to use (e.g. '0,1').")
+    parser.add_argument("--seed", type=int, default=1, metavar="S", help="Random seed for reproducibility.")
+    
+    # --- Checkpointing & Fine-Tuning ---
+    parser.add_argument("--resume", type=str, default="init_weights/deeplab-resnet.pth.tar", help="Path to checkpoint model to resume from.")
+    parser.add_argument("--checkname", type=str, default="deeplab-resnet", help="Identifier name for saving checkpoints.")
+    parser.add_argument("--ft", action="store_true", default=False, help="Enable fine-tuning on a pre-trained model.")
+    parser.add_argument("--eval-interval", type=int, default=1, help="Validation interval (in epochs).")
+   
+    return parser
+  
+def get_stage2_config(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """
+    Parses arguments for Stage 2 and returns parsed configurations.
+    """
+    parser = build_stage2_parser()
+    args = parser.parse_args(argv)
+    
+    return args

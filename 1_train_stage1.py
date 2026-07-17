@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from configs.model_config import get_config
+from configs.model_config import get_stage1_config
 # import argparse
 import importlib
 # from visdom import Visdom
@@ -201,7 +201,7 @@ if __name__ == '__main__':
     # args = parser.parse_args()
     
     # Automatically parses all arguments, builds Path objects, and sets up folders
-    args = get_config()
+    args = get_stage1_config()
 
     # You can access your arguments clean and safe now:
     print(f"Running session: {args.session_name} with network: {args.network}")
