@@ -3,3 +3,5 @@ logs/*/
 outputs/*/
 init_weights/*/
 checkpoints/*/
+/checkpoints
+/init_weights
