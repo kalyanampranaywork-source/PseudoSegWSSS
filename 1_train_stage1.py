@@ -217,9 +217,9 @@ if __name__ == '__main__':
 Open your terminal, navigate to your project directory, and launch the dashboard by running:
 
 BASH
-tensorboard --logdir=runs
+tensorboard --logdir=logs
 or
-python -m tensorboard.main --logdir=runs
+python -m tensorboard.main --logdir=logs
 
 It will give you a local URL link (usually http://localhost:6006/). Open that in your web browser, and you will see dynamic line charts updating in real-time as your code runs.  
 """
