@@ -1,0 +1,122 @@
+from pathlib import Path
+import torch
+from torch.utils.data import DataLoader
+from torchvision import transforms
+
+from tool.GenDataset import (
+    Stage1_TrainDataset,
+    Stage1CurriculumDataset,
+)
+
+
+def _build_train_dataloader(
+    config,
+    iteration,
+    iteration_manager,
+    runtime,
+):
+    """
+    Build the Stage-1 training dataloader.
+
+    Responsibilities
+    ----------------
+    1. Create training transforms.
+    2. Select the appropriate dataset.
+    3. Construct the DataLoader.
+    """
+
+    logger = runtime.logger
+
+    logger.info("-" * 80)
+    logger.info("Building Training Dataset")
+    logger.info("-" * 80)
+
+    # ------------------------------------------------------------
+    # Training augmentation
+    # ------------------------------------------------------------
+
+    train_transform = transforms.Compose([
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomVerticalFlip(p=0.5),
+        transforms.ToTensor(),
+    ])
+
+    # ------------------------------------------------------------
+    # Dataset selection
+    # ------------------------------------------------------------
+
+    use_pseudo = iteration > 0
+
+    if use_pseudo:
+        runtime.logger.info("Curriculum Mode : Ground Truth + Pseudo Labels")
+
+        pseudo_label_file = iteration_manager.get_pseudo_label_file()
+
+        logger.info("Curriculum Mode : Ground Truth + Pseudo Labels")
+        
+        
+        if not Path(pseudo_label_file).exists():
+
+            runtime.logger.warning(
+                "Pseudo label file not found: %s",
+                pseudo_label_file,
+            )
+
+            runtime.logger.warning(
+                "Using ground-truth labels as pseudo labels for this iteration."
+            )
+
+            dataset = Stage1CurriculumDataset(
+                data_path=config.stage1_trainroot,
+                pseudo_label_file=None,
+                transform=train_transform,
+                dataset=config.dataset,
+                use_ground_truth_as_pseudo=True,
+            )
+
+        else:
+
+            dataset = Stage1CurriculumDataset(
+                data_path=config.stage1_trainroot,
+                pseudo_label_file=pseudo_label_file,
+                transform=train_transform,
+                dataset=config.dataset,
+            )
+
+        # dataset = Stage1CurriculumDataset(
+        #     data_path=config.stage1_trainroot,
+        #     pseudo_label_file=iteration_manager.get_previous_pseudo_label_file(),
+        #     transform=train_transform,
+        #     dataset=config.dataset,
+        # )
+
+    else:
+
+        logger.info("Curriculum Mode : Ground Truth Only")
+
+        dataset = Stage1_TrainDataset(
+            data_path=config.stage1_trainroot,
+            transform=train_transform,
+            dataset=config.dataset,
+        )
+
+    # ------------------------------------------------------------
+    # DataLoader
+    # ------------------------------------------------------------
+
+    train_loader = DataLoader(
+        dataset=dataset,
+        batch_size=config.stage1_batch_size,
+        shuffle=True,
+        num_workers=config.stage1_num_workers,
+        pin_memory=torch.cuda.is_available(),
+        drop_last=False,
+    )
+
+    logger.info(f"Training Samples : {len(dataset):,}")
+    logger.info(f"Batch Size       : {config.stage1_batch_size}")
+    logger.info(f"Iterations/Epoch : {len(train_loader):,}")
+    logger.info(f"Workers          : {config.stage1_num_workers}")
+    logger.info("Training dataloader successfully created.\n")
+
+    return train_loader

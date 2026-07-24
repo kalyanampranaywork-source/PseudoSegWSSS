@@ -2,6 +2,8 @@
 # import pdb
 import contextlib
 
+from tqdm import tqdm
+
 import numpy as np
 import torch
 from torch.backends import cudnn
@@ -49,7 +51,18 @@ def infer(model, dataroot, n_class):
                                 shuffle=False,
                                 num_workers=2,
                                 pin_memory=False)
-    for iter, (img_name, img_list) in enumerate(infer_data_loader):
+    
+    progress_bar = tqdm(
+        enumerate(infer_data_loader),
+        total=len(infer_data_loader),
+        desc="Stage-1 Inference",
+        unit="image",
+        dynamic_ncols=True,
+        leave=True,
+    )
+    
+    # for iter, (img_name, img_list) in enumerate(infer_data_loader):
+    for iter, (img_name, img_list) in progress_bar:
         img_name = img_name[0]; 
 
         # img_path = os.path.join(os.path.join(dataroot,'img'),img_name+'.png')
@@ -109,8 +122,15 @@ def infer(model, dataroot, n_class):
         # print("Image:", img_path)
         cam_score, bg_score = infer_utils.dict2npy(cam_dict, label, orig_img, None)
         seg_map = infer_utils.cam_npy_to_label_map(cam_score)
+        
+        progress_bar.set_postfix(
+            Image=os.path.basename(img_name),
+            Processed=f"{iter + 1}/{len(infer_data_loader)}",
+        )
+        
         if iter%100==0:
             print(iter)
+            
         cam_list.append(seg_map)
         # gt_map_path = os.path.join(os.path.join(dataroot,'mask'), img_name + '.png') 
         gt_map_path = os.path.join(os.path.join(dataroot,'mask'), os.path.basename(img_name) + '.png') 
@@ -189,3 +209,363 @@ def create_pseudo_mask(model, dataroot, fm, savepath, n_class, palette, dataset)
 
         if iter%100==0:           
             print(iter)
+            
+
+
+def create_pseudo_mask_v2(
+    model,
+    dataroot,
+    fm,
+    savepath,
+    n_class,
+    palette,
+    dataset,
+    logger=None,
+):
+    """
+    Generate pseudo masks from a selected feature map.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+
+    dataroot : str
+
+    fm : str
+
+    savepath : str
+
+    n_class : int
+
+    palette : list
+
+    dataset : str
+
+    logger : logging.Logger, optional
+    """
+
+    # ------------------------------------------------------------
+    # Select Feature Map
+    # ------------------------------------------------------------
+    
+    if fm == "b4_3":
+        ffmm = model.b4_3
+    elif fm == "b4_5":
+        ffmm = model.b4_5
+    elif fm == "b5_2":
+        ffmm = model.b5_2
+    elif fm == "b6":
+        ffmm = model.b6
+    elif fm == "bn7":
+        ffmm = model.bn7
+    else:
+        raise ValueError(f"Unknown feature map: {fm}")
+
+    os.makedirs(savepath, exist_ok=True)
+
+    feature_modules = {
+        "b4_3": model.b4_3,
+        "b4_5": model.b4_5,
+        "b5_2": model.b5_2,
+        "b6": model.b6,
+        "bn7": model.bn7,
+    }
+
+    if fm not in feature_modules:
+        raise ValueError(f"Unknown feature map: {fm}")
+
+    ffmm = feature_modules[fm]
+
+    # ------------------------------------------------------------
+    # Dataset
+    # ------------------------------------------------------------
+
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+        ]
+    )
+
+    infer_dataset = Stage1_InferDataset(
+        data_path=os.path.join(dataroot, "train5"),
+        transform=transform,
+    )
+
+    infer_loader = DataLoader(
+        infer_dataset,
+        shuffle=False,
+        num_workers=2,
+        pin_memory=False,
+    )
+
+    if logger is not None:
+
+        logger.info("=" * 80)
+        logger.info(f"Generating pseudo masks from feature map : ({fm})")
+        logger.info("=" * 80)
+        logger.info(f"Dataset          : {dataset}")
+        logger.info(f"Feature Map      : {fm}")
+        logger.info(f"Images           : {len(infer_dataset)}")
+        logger.info(f"Output Directory : {savepath}")
+
+    # ------------------------------------------------------------
+    # Generate Masks
+    # ------------------------------------------------------------
+
+    progress = tqdm(
+        infer_loader,
+        desc=f"{fm}",
+        unit="image",
+        dynamic_ncols=True,
+    )
+    for iteration, (img_name, img_list) in enumerate(progress):
+    # for _, (img_name, img_list) in enumerate(progress):
+
+        img_name = img_name[0]
+
+        img_path = os.path.join(
+            dataroot,
+            "train5",
+            os.path.basename(img_name) + ".png",
+        )
+
+        orig_img = np.asarray(
+            Image.open(img_path)
+        )
+
+        grad_cam = GradCam(
+            model=model,
+            feature_module=ffmm,
+            target_layer_names=["1"],
+            use_cuda=torch.cuda.is_available(),
+        )
+
+        cam = []
+
+        for class_id in range(n_class):
+
+            grayscale_cam, _ = grad_cam(
+                img_list,
+                class_id,
+            )
+
+            cam.append(grayscale_cam)
+
+        norm_cam = np.array(cam)
+
+        cam_min = np.min(norm_cam)
+        cam_max = np.max(norm_cam)
+
+        if cam_max > cam_min:
+
+            norm_cam = (norm_cam - cam_min) / (
+                cam_max - cam_min
+            )
+
+        else:
+
+            norm_cam = np.zeros_like(norm_cam)
+
+        # --------------------------------------------------------
+        # Parse Image-Level Label
+        # --------------------------------------------------------
+
+        label_str = img_name.split("]")[0].split("[")[-1]
+
+        if dataset == "luad":
+
+            label = torch.tensor(
+                [
+                    int(label_str[0]),
+                    int(label_str[2]),
+                    int(label_str[4]),
+                    int(label_str[6]),
+                ]
+            )
+
+        else:
+
+            label = torch.tensor(
+                [
+                    int(label_str[0]),
+                    int(label_str[1]),
+                    int(label_str[2]),
+                    int(label_str[3]),
+                ]
+            )
+
+        cam_dict = infer_utils.cam_npy_to_cam_dict(
+            norm_cam,
+            label,
+        )
+
+        cam_score, bg_score = infer_utils.dict2npy(
+            cam_dict,
+            label,
+            orig_img,
+            None,
+        )
+
+        if dataset == "luad":
+
+            bgcam_score = np.concatenate(
+                (
+                    cam_score,
+                    bg_score,
+                ),
+                axis=0,
+            )
+
+        elif dataset == "bcss":
+
+            bg_score = np.zeros((1, 224, 224))
+
+            bgcam_score = np.concatenate(
+                (
+                    cam_score,
+                    bg_score,
+                ),
+                axis=0,
+            )
+
+        seg_map = infer_utils.cam_npy_to_label_map(
+            bgcam_score
+        )
+
+        visual = Image.fromarray(
+            seg_map.astype(np.uint8),
+            "P",
+        )
+
+        visual.putpalette(
+            palette
+        )
+
+        visual.save(
+            os.path.join(
+                savepath,
+                os.path.basename(img_name) + ".png",
+            ),
+            format="PNG",
+        )
+
+        progress.set_postfix(
+            Image=os.path.basename(img_name),
+        )
+        
+        if logger is not None and (iteration + 1) % 100 == 0:
+
+            logger.info(
+                f"[{fm}] Processed {iteration + 1}/{len(infer_dataset)} images"
+            )
+
+    progress.close()
+
+    if logger is not None:
+
+        logger.info(
+            f"Completed pseudo-mask generation ({fm})"
+        )
+
+        logger.info(
+            f"Saved masks to : {savepath}"
+        )
+
+        logger.info("")
+        
+        
+
+from tool.gradcam import GradCAMv2
+
+
+def create_pseudo_mask_v3(model, layer_name, dataroot, savepath, n_class, palette, dataset, device, logger=None):
+    os.makedirs(savepath, exist_ok=True)
+    
+    # print("=== All modules in model ===")
+    # for name, module in model.named_modules():
+    #     print(name, "->", type(module).__name__)
+
+    # One GradCAM extractor per layer -- hooks are attached once here
+    cam_extractor = GradCAMv2(model, layer_name, device)
+
+    transform = transforms.Compose([transforms.ToTensor()])
+    infer_dataset = Stage1_InferDataset(data_path=os.path.join(dataroot, 'train5'), transform=transform)
+    infer_loader = DataLoader(infer_dataset, shuffle=False, num_workers=2, pin_memory=False)
+    
+    if logger is not None:
+
+        logger.info("=" * 80)
+        logger.info(f"Generating pseudo masks from feature map : ({layer_name})")
+        logger.info("=" * 80)
+        logger.info(f"Dataset          : {dataset}")
+        logger.info(f"Feature Map      : {layer_name}")
+        logger.info(f"Images           : {len(infer_dataset)}")
+        logger.info(f"Output Directory : {savepath}")
+        
+    progress = tqdm(
+        infer_loader,
+        desc=f"{layer_name}",
+        unit="image",
+        dynamic_ncols=True,
+    )
+    
+    for iter, (img_name, img_tensor) in enumerate(progress):
+    # for iter, (img_name, img_tensor) in enumerate(infer_loader):
+        img_name = img_name[0]
+        img_path = os.path.join(dataroot, 'train5', os.path.basename(img_name) + '.png')
+        orig_img = np.asarray(Image.open(img_path))
+
+        # Get one heatmap per class from THIS layer
+        cams = []
+        for class_idx in range(n_class):
+            cam = cam_extractor(img_tensor, class_idx)   # (224, 224), values in [0, 1]
+            # print(f"[{layer_name}] class={class_idx} mean={cam.mean():.6f} std={cam.std():.6f} shape={cam.shape}")
+            
+            cams.append(cam)
+        norm_cam = np.stack(cams, axis=0)   # shape (n_class, 224, 224)
+
+        # ---- everything below is UNCHANGED from your original code ----
+        label_str = img_name.split(']')[0].split('[')[-1]
+        if dataset == 'luad':
+            label = torch.Tensor([int(label_str[0]), int(label_str[2]), int(label_str[4]), int(label_str[6])])
+        elif dataset == 'bcss':
+            label = torch.Tensor([int(label_str[0]), int(label_str[1]), int(label_str[2]), int(label_str[3])])
+
+        cam_dict = infer_utils.cam_npy_to_cam_dict(norm_cam, label)
+        cam_score, bg_score = infer_utils.dict2npy(cam_dict, label, orig_img, None)
+
+        if dataset == 'luad':
+            bgcam_score = np.concatenate((cam_score, bg_score), axis=0)
+        elif dataset == 'bcss':
+            bg_score = np.zeros((1, 224, 224))
+            bgcam_score = np.concatenate((cam_score, bg_score), axis=0)
+
+        seg_map = infer_utils.cam_npy_to_label_map(bgcam_score)
+        visualimg = Image.fromarray(seg_map.astype(np.uint8), "P")
+        visualimg.putpalette(palette)
+        visualimg.save(os.path.join(savepath, os.path.basename(img_name) + '.png'), format='PNG')
+        
+        progress.set_postfix(
+            Image=os.path.basename(img_name),
+        )
+        
+        if logger is not None and (iter + 1) % 100 == 0:
+            logger.info(
+                f"[{layer_name}] Processed {iter + 1}/{len(infer_dataset)} images"
+            )
+
+        # if iter % 100 == 0:
+        #     print(iter)
+        progress.close()
+
+    if logger is not None:
+
+        logger.info(
+            f"Completed pseudo-mask generation ({layer_name})"
+        )
+
+        logger.info(
+            f"Saved masks to : {savepath}"
+        )
+
+        logger.info("")

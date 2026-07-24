@@ -52,8 +52,8 @@ class ResBlock(nn.Module):
 
         return x
 
-    def __call__(self, x, get_x_bn_relu=False):
-        return self.forward(x, get_x_bn_relu=get_x_bn_relu)
+    # def __call__(self, x, get_x_bn_relu=False):
+    #     return self.forward(x, get_x_bn_relu=get_x_bn_relu)
 
 class ResBlock_bot(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, dilation=1, dropout=0.):
@@ -103,8 +103,8 @@ class ResBlock_bot(nn.Module):
 
         return x
 
-    def __call__(self, x, get_x_bn_relu=False):
-        return self.forward(x, get_x_bn_relu=get_x_bn_relu)
+    # def __call__(self, x, get_x_bn_relu=False):
+    #     return self.forward(x, get_x_bn_relu=get_x_bn_relu)
 
 class Normalize():
     def __init__(self, mean = (0.485, 0.456, 0.406), std = (0.229, 0.224, 0.225)):

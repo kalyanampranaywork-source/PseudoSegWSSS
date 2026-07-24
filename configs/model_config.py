@@ -174,3 +174,97 @@ def get_stage2_config(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     
     return args
+
+
+
+
+# ============================================================================
+# Curriculum Learning Configuration
+# ============================================================================
+def build_curriculum_parser() -> argparse.ArgumentParser:
+    """
+    Build the argument parser for the curriculum learning framework.
+
+    The curriculum configuration serves as the central configuration for the
+    entire pipeline. Stage-specific parameters are grouped using stage-specific
+    prefixes to avoid naming conflicts and improve maintainability.
+    """
+
+    parser = argparse.ArgumentParser(
+        description="Curriculum-Based Weakly Supervised Semantic Segmentation"
+    )
+
+    # ==========================================================================
+    # Dataset Configuration
+    # ==========================================================================
+
+    parser.add_argument("--dataset", type=str, default="luad", help="Dataset name.")
+    parser.add_argument("--dataroot", type=str, default="datasets/LUAD-HistoSeg", help="Root directory of the dataset.")
+    parser.add_argument("--output_dir", type=str, default="outputs", help="Root directory for curriculum outputs.")
+
+    # ==========================================================================
+    # Stage-1 Configuration
+    # ==========================================================================
+
+    parser.add_argument("--stage1_trainroot", type=str, default="datasets/LUAD-HistoSeg/train5/", help="Training dataset.")
+    parser.add_argument("--stage1_testroot", type=str, default="datasets/LUAD-HistoSeg/test/", help="Testing dataset.")
+    parser.add_argument("--stage1_save_folder", type=str, default="checkpoints/", help="Checkpoint directory.")
+
+    parser.add_argument("--stage1_network", type=str, default="network.resnet38_cls", help="Classification network.")
+    parser.add_argument("--stage1_n_class", type=positive_int, default=4, help="Number of image-level classes.")
+    parser.add_argument("--stage1_weights", type=str, default="init_weights/ilsvrc-cls_rna-a1_cls1000_ep-0001.pth", help="Initial classification weights.")
+    parser.add_argument( "--stage1_checkpoint", type=str, default="checkpoints/stage1/stage1_best.pth", help="Checkpoint of the trained Stage-1 classifier used for evaluation.", )
+
+    parser.add_argument("--stage1_batch_size", type=positive_int, default=20, help="Training batch size.")
+    parser.add_argument("--stage1_max_epoches", type=positive_int, default=3, help="Number of training epochs.")
+    parser.add_argument("--stage1_lr", type=float, default=0.01, help="Initial learning rate.")
+    parser.add_argument("--stage1_wt_dec", type=float, default=5e-4, help="Weight decay.")
+    parser.add_argument("--stage1_init_gama", type=float, default=1.0, help="Initial Progressive Dropout Attention coefficient.")
+    parser.add_argument("--stage1_num_workers", type=positive_int, default=4, help="Number of dataloader workers.")
+
+    parser.add_argument("--stage1_session_name", type=str, default="Stage 1", help="Training session name.")
+    parser.add_argument("--stage1_env_name", type=str, default="PDA", help="TensorBoard environment.")
+    parser.add_argument("--stage1_model_name", type=str, default="PDA", help="Model identifier.")
+    
+    parser.add_argument("--stage1_gt_loss_weight", type=float, default=0.8, help="Stage 1 ground truth loss weight.")
+    parser.add_argument("--stage1_pseudo_loss_weight", type=float, default=0.2, help="Stage 1 pseudo-label loss weight.")
+
+    # ==========================================================================
+    # Curriculum Configuration
+    # ==========================================================================
+
+    parser.add_argument("--num_iterations", type=positive_int, default=1, help="Maximum number of curriculum iterations.")
+    parser.add_argument("--start_iteration", type=int, default=0, help="Iteration index to start from.")
+    parser.add_argument("--resume", action="store_true", default=False, help="Resume an existing curriculum experiment.")
+
+    # ==========================================================================
+    # Runtime Configuration
+    # ==========================================================================
+
+    parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"], help="Execution device.")
+    parser.add_argument("--dry_run", action="store_true", default=False, help="Run without saving outputs.")
+    parser.add_argument("--log_level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level.")
+
+    return parser
+
+
+def get_curriculum_config(
+    argv: Sequence[str] | None = None,
+) -> argparse.Namespace:
+    """
+    Parse curriculum configuration.
+
+    Returns
+    -------
+    argparse.Namespace
+        Curriculum configuration.
+    """
+
+    parser = build_curriculum_parser()
+
+    args = parser.parse_args(argv)
+
+    args.output_dir = Path(args.output_dir)
+
+    return args

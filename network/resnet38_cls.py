@@ -102,9 +102,9 @@ class Net_CAM(network.resnet38d.Net):
         return y
 
     def forward_cam(self, x):
-        x_ = super().forward(x)
+        x_ = super().forward(x)  # It always uses super().forward(x), which is the network's final output (typically after bn7 / the last conv stage)
         x_pool = F.avg_pool2d(x_, kernel_size=(x_.size(2), x_.size(3)), padding=0)
-        x = F.conv2d(x_, self.fc8.weight)
+        x = F.conv2d(x_, self.fc8.weight) # and always multiplies by self.fc8.weight.
         cam = F.relu(x)
         y = self.fc8(x_pool)
         y = y.view(y.size(0), -1)
@@ -134,3 +134,6 @@ class Net_CAM(network.resnet38d.Net):
                         groups[1].append(m.bias)
 
         return groups
+    
+    
+    

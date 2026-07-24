@@ -235,3 +235,79 @@ if __name__ == '__main__':
     # visualimg  = Image.fromarray(seg_map.astype(np.uint8), "P")
     # visualimg.putpalette(palette) 
     # visualimg.save(image_path.split('.')[0]+'mask.png', format='PNG')
+
+
+
+class GradCAMv2:
+    """
+    Universal Grad-CAM extractor.
+    Works on ANY layer of ANY classifier — you only need the layer's name.
+    Attach once per layer, then call it once per (image, class) pair.
+    """
+
+    def __init__(self, model, layer_name, device):
+        self.model = model
+        self.model.eval()
+        self.device = device
+        self.model = self.model.to(self.device)
+
+        self.activation = None   # will hold the layer's output (forward pass)
+        self.gradient = None     # will hold the gradient flowing into that output (backward pass)
+
+        # Find the actual layer object inside the model using its string name
+        layer = dict(model.named_modules())[layer_name]
+
+        # Register hooks -- these fire AUTOMATICALLY during normal forward/backward,
+        # we don't need to touch or replay the model's internals at all.
+        self.fwd_handle = layer.register_forward_hook(self._save_activation)
+        self.bwd_handle = layer.register_full_backward_hook(self._save_gradient)
+
+    def remove_hooks(self):
+        self.fwd_handle.remove()
+        self.bwd_handle.remove()
+    
+    def _save_activation(self, module, input, output):
+        # Called automatically right after this layer computes its output
+        self.activation = output
+
+    def _save_gradient(self, module, grad_input, grad_output):
+        # Called automatically when .backward() sends gradient through this layer
+        self.gradient = grad_output[0]
+
+    def __call__(self, img_tensor, target_class, out_size=(224, 224)):
+        img_tensor = img_tensor.to(self.device)
+        
+        with torch.enable_grad():
+            # 1. Normal forward pass -- PyTorch computes the REAL graph, nothing simulated
+            logits = self.model(img_tensor) # shape: (1, n_class)
+            
+            # print("activation is None?", self.activation is None)
+            # print("logits requires_grad:", logits.requires_grad)
+            # print("logits grad_fn:", logits.grad_fn)
+            
+            # 2. Backprop from ONLY the target class's score
+            self.model.zero_grad()
+            score = logits[0, target_class]
+            score.backward(retain_graph=True)
+            # print("gradient is None?", self.gradient is None)
+            # After this line, self.activation and self.gradient are filled in
+            # (by the hooks above) for THIS layer, THIS class.
+
+
+        # 3. Grad-CAM weight per channel = average gradient over space (H, W)
+        weights = self.gradient.mean(dim=(2, 3), keepdim=True)     # shape (1, C, 1, 1)
+
+        # 4. Weighted sum over channels, then ReLU (keep only positive influence)
+        cam = (weights * self.activation).sum(dim=1, keepdim=True)  # shape (1, 1, H, W)
+        cam = F.relu(cam)
+
+        # 5. Resize to 224x224 using bilinear interpolation
+        cam = F.interpolate(cam, size=out_size, mode='bilinear', align_corners=False)
+        cam = cam.squeeze().detach().cpu().numpy()
+
+        # 6. Normalize to [0, 1] so different layers/classes are comparable
+        cam -= cam.min()
+        if cam.max() > 0:
+            cam /= cam.max()
+
+        return cam

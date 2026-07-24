@@ -410,14 +410,14 @@ def find_200_pseudo_label(image_name, round_nb):
     return label_20, label_200
 
 
-def cam_npy_to_cam_dict(cam_np, label):
-    cam_dict = {}
-    idxs = np.where(label==1)[0]
+# def cam_npy_to_cam_dict(cam_np, label):
+#     cam_dict = {}
+#     idxs = np.where(label==1)[0]
 
-    for idx in idxs:
-        cam_dict[idx] = cam_np[idx]
+#     for idx in idxs:
+#         cam_dict[idx] = cam_np[idx]
 
-    return cam_dict
+#     return cam_dict
 
 
 def response_to_label(cam_npy):

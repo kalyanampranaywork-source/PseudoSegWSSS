@@ -68,3 +68,12 @@ if __name__ == '__main__':
     if not os.path.exists(savepath):
         os.mkdir(savepath)
     create_pseudo_mask(model, args.dataroot, fm, savepath, args.n_class, palette, args.dataset)
+    
+    
+    # print(model.b4_5)
+    # print(model.b5_2)
+    # print(model.bn7)
+
+    # print(id(model.b4_5))
+    # print(id(model.b5_2))
+    # print(id(model.bn7))

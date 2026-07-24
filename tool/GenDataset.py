@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import json
 import torch
 from PIL import Image
 from torchvision import transforms
@@ -31,6 +32,60 @@ class Stage1_InferDataset(Dataset):
                 image_path = os.path.join(root, f)
                 path_list.append(image_path)
         return path_list
+
+
+def _build_validation_dataloader(config):
+    """
+    Build the Stage-1 validation dataloader.
+
+    Responsibilities
+    ----------------
+    1. Create validation transforms.
+    2. Build the inference dataset.
+    3. Build the validation dataloader.
+
+    Parameters
+    ----------
+    config : Stage1Config
+        Stage-1 configuration.
+
+    Returns
+    -------
+    torch.utils.data.DataLoader
+        Validation dataloader.
+    """
+
+    # ------------------------------------------------------------
+    # Validation Transform
+    # ------------------------------------------------------------
+
+    validation_transform = transforms.Compose([
+        transforms.ToTensor(),
+    ])
+
+    # ------------------------------------------------------------
+    # Validation Dataset
+    # ------------------------------------------------------------
+
+    validation_dataset = Stage1_InferDataset(
+        data_path=config.testroot,
+        transform=validation_transform,
+    )
+
+    # ------------------------------------------------------------
+    # Validation DataLoader
+    # ------------------------------------------------------------
+
+    validation_loader = DataLoader(
+        dataset=validation_dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
+        num_workers=config.num_workers,
+        pin_memory=torch.cuda.is_available(),
+        drop_last=False,
+    )
+
+    return validation_loader
 
 class Stage1_TrainDataset(Dataset):
     def __init__(self, data_path, transform=None, target_transform=None, dataset=None):
@@ -67,6 +122,135 @@ class Stage1_TrainDataset(Dataset):
                     image_label = torch.Tensor([int(label_str[0]),int(label_str[1]),int(label_str[2]),int(label_str[3])])
                 path_label.append((image_path, image_label))
         return path_label
+
+
+class Stage1CurriculumDataset(Dataset):
+    """
+    Stage-1 dataset used for curriculum iterations (iteration > 0).
+
+    Returns
+    -------
+    filename
+    image
+    ground_truth_label
+    pseudo_label
+    """
+
+    def __init__(
+        self,
+        data_path,
+        pseudo_label_file,
+        transform=None,
+        target_transform=None,
+        dataset=None,
+        use_ground_truth_as_pseudo=False,
+    ):
+
+        self.data_path = data_path
+        self.transform = transform
+        self.target_transform = target_transform
+        self.dataset = dataset
+        self.use_ground_truth_as_pseudo = use_ground_truth_as_pseudo
+
+        # --------------------------------------------------------
+        # Load pseudo labels
+        # --------------------------------------------------------
+        if not self.use_ground_truth_as_pseudo:
+            with open(pseudo_label_file, "r") as f:
+                self.pseudo_labels = json.load(f)
+
+        # --------------------------------------------------------
+        # Build dataset
+        # --------------------------------------------------------
+
+        self.samples = self.path_label()
+
+    def __getitem__(self, index):
+
+        image_path, gt_label = self.samples[index]
+
+        filename = os.path.basename(image_path)
+        image_id = os.path.splitext(filename)[0]
+
+        image = Image.open(image_path).convert("RGB")
+
+        if self.transform is not None:
+            image = self.transform(image)
+
+        if self.target_transform is not None:
+            gt_label = self.target_transform(gt_label)
+
+        # --------------------------------------------------------
+        # Retrieve pseudo label
+        # --------------------------------------------------------
+        if self.use_ground_truth_as_pseudo:
+
+            pseudo_label = gt_label.clone()
+
+        else:
+
+            pseudo_label = torch.tensor(
+                self.pseudo_labels[filename],
+                dtype=torch.float32,
+            )
+
+        # pseudo_label = torch.tensor(
+        #     self.pseudo_labels[image_id],
+        #     dtype=torch.float32,
+        # )
+
+        return (
+            image_id,
+            image,
+            gt_label,
+            pseudo_label,
+        )
+
+    def __len__(self):
+        return len(self.samples)
+
+    def path_label(self):
+
+        samples = []
+
+        for root, _, files in os.walk(self.data_path):
+
+            for file in files:
+
+                image_path = os.path.join(root, file)
+
+                filename = os.path.splitext(file)[0]
+
+                label_str = filename.split("]")[0].split("[")[-1]
+
+                if self.dataset == "luad":
+
+                    gt_label = torch.tensor([
+                        int(label_str[0]),
+                        int(label_str[2]),
+                        int(label_str[4]),
+                        int(label_str[6]),
+                    ], dtype=torch.float32)
+
+                elif self.dataset == "bcss":
+
+                    gt_label = torch.tensor([
+                        int(label_str[0]),
+                        int(label_str[1]),
+                        int(label_str[2]),
+                        int(label_str[3]),
+                    ], dtype=torch.float32)
+
+                else:
+                    raise ValueError(
+                        f"Unsupported dataset: {self.dataset}"
+                    )
+
+                samples.append((image_path, gt_label))
+
+        return samples
+
+
 
 class Stage2_Dataset(Dataset):
     def __init__(self, args, base_dir, split):
